@@ -1,0 +1,614 @@
+Table users {
+  id uuid [pk, default: `gen_random_uuid()`]
+  email varchar [not null, unique]
+  password_hash varchar
+  first_name varchar [not null]
+  last_name varchar [not null]
+  is_active boolean [not null, default: true]
+  email_verified_at timestamp
+  last_login_at timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  Note: 'password_hash nullable: login social permitido como único método de auth. PENDIENTE: validar a nivel aplicación que todo usuario tenga al menos un método de auth activo (password_hash NOT NULL o al menos una fila en user_identities) — no expresable con FK/CHECK simple'
+}
+
+Table organizations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  created_by uuid
+  name varchar [not null]
+  slug varchar [not null, unique]
+  is_active boolean [not null, default: true]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+}
+
+Table organization_members {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  user_id uuid [not null]
+  role_id uuid [not null]
+  invited_by uuid
+  joined_at timestamp [not null, default: `now()`]
+  left_at timestamp
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (organization_id, user_id) [unique]
+    (user_id)
+  }
+
+  Note: 'left_at: salida real del negocio (distinto de deleted_at, que es corrección/borrado por error). PENDIENTE (DDL final): el unique (organization_id, user_id) debe ser índice parcial WHERE deleted_at IS NULL'
+}
+
+Table projects {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  created_by uuid [not null]
+  name varchar [not null]
+  description text
+  is_active boolean [not null, default: true]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+}
+
+Table project_members {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  user_id uuid [not null]
+  role_id uuid [not null]
+  invited_by uuid
+  joined_at timestamp [not null, default: `now()`]
+  left_at timestamp
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (project_id, user_id) [unique]
+    (user_id)
+  }
+
+  Note: 'left_at: salida real del negocio (distinto de deleted_at). PENDIENTE (DDL final): el unique (project_id, user_id) debe ser índice parcial WHERE deleted_at IS NULL. PENDIENTE: validar que user_id sea también organization_member activo de la organization_id dueña de este project (regla cruzada no expresable con FK simple, requiere trigger o validación de aplicación)'
+}
+
+Table permissions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  key varchar [not null, unique]
+  description varchar
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  Note: 'Catálogo fijo de permisos que provee la app, ej: "work_items.create", "work_items.delete", "members.invite"'
+}
+
+Table roles {
+  id uuid [pk, default: `gen_random_uuid()`]
+  scope_type varchar
+  scope_id uuid
+  created_by uuid
+  name varchar [not null]
+  description varchar
+  is_system boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (scope_type, scope_id, name) [unique]
+  }
+
+  Note: 'is_system=true → rol base global (scope_type/scope_id NULL). is_system=false → rol custom, scope_type indica "organization" o "project", scope_id apunta al id correspondiente (sin FK real por ser polimórfico — no validable a nivel DB, requiere trigger o validación de aplicación). El unique (scope_type, scope_id, name) solo cubre roles custom (scope_id NOT NULL); para roles de sistema (scope_id NULL) el unique de Postgres no aplica entre NULLs, por eso se necesita un índice adicional en el DDL final para garantizar nombre único entre roles de sistema. PENDIENTE (DDL final): (1) CHECK (is_system = true AND scope_type IS NULL AND scope_id IS NULL) OR (is_system = false AND scope_type IS NOT NULL AND scope_id IS NOT NULL); (2) CREATE UNIQUE INDEX roles_system_name_uk ON roles (name) WHERE is_system = true AND deleted_at IS NULL — SIN este índice parcial, dos roles de sistema podrían tener el mismo nombre; (3) el unique (scope_type, scope_id, name) debe ser parcial WHERE deleted_at IS NULL AND is_system = false'
+}
+
+Table role_permissions {
+  role_id uuid [not null]
+  permission_id uuid [not null]
+  granted_by uuid
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (role_id, permission_id) [pk]
+  }
+}
+
+Table user_preferences {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null]
+  language varchar [not null, default: 'es']
+  theme varchar [not null, default: 'system']
+  timezone varchar [not null, default: 'UTC']
+  date_format varchar [not null, default: 'YYYY-MM-DD']
+  email_notifications_enabled boolean [not null, default: true]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (user_id) [unique]
+  }
+}
+
+Table organization_settings {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  default_language varchar [not null, default: 'es']
+  default_timezone varchar [not null, default: 'UTC']
+  plan varchar [not null, default: 'free']
+  member_limit integer
+  billing_email varchar
+  updated_by uuid
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (organization_id) [unique]
+  }
+
+  Note: 'PENDIENTE (DDL final): CHECK (member_limit IS NULL OR member_limit > 0) — NULL significa sin límite'
+}
+
+Table project_settings {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  methodology varchar [not null, default: 'free']
+  is_public boolean [not null, default: false]
+  updated_by uuid
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (project_id) [unique]
+  }
+
+  Note: 'methodology: free (default, sin restricciones) | scrum | feature_based. Comportamiento y reglas de cada metodología resueltos 100% a nivel aplicación, no en la DB'
+}
+
+Table user_tokens {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null]
+  type varchar [not null]
+  token_hash varchar [not null, unique]
+  expires_at timestamp [not null]
+  used_at timestamp
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (user_id)
+    (token_hash) [unique]
+  }
+
+  Note: 'type: password_reset | email_verification. PENDIENTE (DDL final): CHECK (type IN (\'password_reset\', \'email_verification\')). token_hash: nunca guardar el token en texto plano, solo su hash'
+}
+
+Table invitations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  scope_type varchar [not null]
+  scope_id uuid [not null]
+  email varchar [not null]
+  role_id uuid [not null]
+  invited_by uuid [not null]
+  status varchar [not null, default: 'pending']
+  token_hash varchar [not null, unique]
+  expires_at timestamp [not null]
+  accepted_at timestamp
+  accepted_by uuid
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (scope_type, scope_id, email) [unique]
+    (token_hash) [unique]
+  }
+
+  Note: 'scope_type: organization | project (sin FK real en scope_id, mismo trade-off que roles). status: pending | accepted | expired | revoked. Si scope_type=project y el invitado no es organization_member de la organización dueña del proyecto, al aceptar la app debe crear también esa membership (organization_id se deriva via projects.organization_id, no se duplica acá). PENDIENTE (DDL final): CHECK (scope_type IN (\'organization\',\'project\')) y CHECK (status IN (\'pending\',\'accepted\',\'expired\',\'revoked\')); el unique (scope_type, scope_id, email) debería ser parcial WHERE status = \'pending\' para permitir re-invitar tras expiración/revocación'
+}
+
+Table sessions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null]
+  token_hash varchar [not null, unique]
+  user_agent varchar
+  ip_address varchar
+  device_name varchar
+  last_activity_at timestamp [not null, default: `now()`]
+  expires_at timestamp [not null]
+  revoked_at timestamp
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (user_id)
+    (token_hash) [unique]
+  }
+
+  Note: 'No cachea rol/permisos — autorización se resuelve en cada request contra roles/role_permissions, no contra esta tabla (evita permisos desactualizados si cambia el rol a mitad de sesión). last_activity_at: actualizar con throttle a nivel app (ej. solo si pasaron >5 min desde el último valor), no en cada request. Límite de sesiones simultáneas (ej. 5) y expulsión de la más vieja: lógica de aplicación, no constraint de DB. revoked_at cubre tanto logout individual como logout global (UPDATE masivo por user_id)'
+}
+
+Table user_identities {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null]
+  provider varchar [not null]
+  provider_user_id varchar [not null]
+  email varchar
+  access_token_encrypted text
+  refresh_token_encrypted text
+  token_expires_at timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (provider, provider_user_id) [unique]
+    (user_id)
+  }
+
+  Note: 'provider: google | github | microsoft (sin CHECK, mismo patrón que otros campos varchar libres del esquema). access_token_encrypted/refresh_token_encrypted: cifrado reversible (no hash) — se necesita recuperar el valor original para llamar APIs del proveedor, a diferencia de password_hash o token_hash en otras tablas que solo se verifican, nunca se recuperan. PENDIENTE: definir mecanismo de cifrado (ej. pgcrypto o cifrado en la capa de aplicación antes de persistir)'
+}
+
+Table iterations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  created_by uuid [not null]
+  updated_by uuid
+  name varchar [not null]
+  start_date date
+  end_date date
+  status varchar [not null, default: 'planned']
+  goal text
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (project_id, name) [unique]
+  }
+
+  Note: 'Contenedor de tiempo genérico: sprint (Scrum/free, con fechas) o milestone (feature-based, sin fechas). status: planned | active | completed (sin CHECK, mismo patrón que otros varchar libres). PENDIENTE (DDL final): el unique (project_id, name) debe ser índice parcial WHERE deleted_at IS NULL, para permitir reusar un nombre tras soft-delete'
+}
+
+Table work_item_statuses {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  created_by uuid
+  updated_by uuid
+  name varchar [not null]
+  category varchar [not null]
+  position integer [not null]
+  is_default boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (project_id, position) [unique]
+    (project_id, name) [unique]
+  }
+
+  Note: 'Columnas del tablero Kanban, configurables por proyecto. category: todo | in_progress | done (fijo, para poder agrupar/reportar aunque el name sea custom, ej. "Code Review" podría ser category=in_progress). position: orden de la columna en el tablero. deleted_at: permite archivar una columna sin perder historial de work_items que la usaron, y sin bloquear el delete:restrict de work_items.status_id si hay items activos. PENDIENTE (DDL final): CREATE UNIQUE INDEX ON work_item_statuses (project_id) WHERE is_default = true AND deleted_at IS NULL — sin esto, nada impide que dos columnas del mismo proyecto queden marcadas como default a la vez'
+}
+
+Table work_items {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  parent_id uuid
+  iteration_id uuid
+  status_id uuid [not null]
+  created_by uuid [not null]
+  updated_by uuid
+  type varchar [not null]
+  title varchar [not null]
+  description text
+  priority varchar
+  due_date date
+  estimate numeric
+  position integer
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (project_id)
+    (parent_id)
+    (iteration_id)
+  }
+
+  Note: 'type: epic | story | feature | task | subtask (sin CHECK). parent_id: self-FK, arma la jerarquía completa (epic→story→task→subtask o feature→task→subtask) sin necesitar una tabla por nivel. iteration_id nullable: cualquier nivel de la jerarquía puede asignarse a un sprint/milestone directamente, o quedar sin asignar. priority: varchar libre (ej. low/medium/high/urgent), sin CHECK. due_date: vencimiento propio del work item, independiente de las fechas del iteration al que pertenece. estimate: numeric genérico — sirve tanto para story points (Scrum, valores enteros pequeños) como para horas/días estimados, la unidad la define la app. position: orden manual dentro de su columna (status) en el tablero, para persistir el drag-and-drop. PENDIENTE: validar a nivel aplicación que iteration_id y status_id pertenezcan al mismo project_id que el work_item (ninguna FK simple lo garantiza); validar reglas de jerarquía por type (ej. una subtask no debería tener hijos) también a nivel aplicación'
+}
+
+Table work_item_assignees {
+  work_item_id uuid [not null]
+  user_id uuid [not null]
+  assigned_by uuid
+  assigned_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (work_item_id, user_id) [pk]
+    (user_id)
+  }
+}
+
+Table ceremonies {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  iteration_id uuid
+  created_by uuid [not null]
+  updated_by uuid
+  type varchar [not null]
+  name varchar
+  scheduled_at timestamp [not null]
+  held_at timestamp
+  status varchar [not null, default: 'scheduled']
+  notes text
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (project_id)
+    (iteration_id)
+  }
+
+  Note: 'type: daily | planning | refinement | retro | custom (sin CHECK, mismo patrón que el resto del esquema). name: solo relevante para type=custom, o para override de display. iteration_id nullable: una ceremonia normalmente pertenece a un sprint, pero puede ser ad-hoc (ej. metodología free) o sin sprint asociado. status: scheduled | completed | cancelled. held_at nullable: se completa cuando la ceremonia efectivamente ocurre (puede diferir de scheduled_at)'
+}
+
+Table ceremony_participants {
+  ceremony_id uuid [not null]
+  user_id uuid [not null]
+  attended boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (ceremony_id, user_id) [pk]
+    (user_id)
+  }
+}
+
+Table ceremony_work_items {
+  id uuid [pk, default: `gen_random_uuid()`]
+  ceremony_id uuid [not null]
+  work_item_id uuid [not null]
+  created_by uuid
+  flag varchar
+  note text
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (ceremony_id)
+    (work_item_id)
+  }
+
+  Note: 'Vincula un work_item a una ceremonia puntual, ej. marcarlo bloqueado en la daily. flag: blocked | discussed | at_risk | completed (varchar libre, sin CHECK — el set de flags posibles lo define la app y puede variar por type de ceremonia). Permite múltiples filas para el mismo (ceremony_id, work_item_id) — ej. se menciona más de una vez en la misma daily con notas distintas. PENDIENTE: validar a nivel aplicación que work_item_id y ceremony_id pertenezcan al mismo project_id'
+}
+
+Table documents {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  created_by uuid [not null]
+  updated_by uuid
+  type varchar [not null, default: 'native']
+  title varchar [not null]
+  content text
+  file_url varchar
+  file_name varchar
+  file_type varchar
+  file_size bigint
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (project_id)
+  }
+
+  Note: 'type: native (contenido markdown/texto en content) | file (archivo subido a storage externo, referencia en file_url + metadata en file_name/file_type/file_size). file_name: nombre original del archivo tal como lo subió el usuario, distinto de file_url que es la referencia interna al storage. file_size en bigint (no integer) para soportar archivos mayores a ~2GB. Sin versionado: cada fila es la única versión vigente, editar sobreescribe content o file_url. PENDIENTE (DDL final): CHECK ((type = \'native\' AND content IS NOT NULL AND file_url IS NULL) OR (type = \'file\' AND file_url IS NOT NULL AND content IS NULL))'
+}
+
+Table document_work_items {
+  id uuid [pk, default: `gen_random_uuid()`]
+  document_id uuid [not null]
+  work_item_id uuid [not null]
+  created_by uuid
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (document_id, work_item_id) [unique]
+    (document_id)
+    (work_item_id)
+  }
+
+  Note: 'Vincula un documento a uno o varios work_items (n:n) — ej. la documentación técnica de una épica, o el archivo de diseño referenciado desde una tarea. A diferencia de ceremony_work_items, acá SÍ es unique por combinación (no tiene sentido vincular el mismo documento al mismo work item más de una vez). PENDIENTE: validar a nivel aplicación que document_id y work_item_id pertenezcan al mismo project_id'
+}
+
+Table conversations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  project_id uuid [not null]
+  work_item_id uuid
+  created_by uuid [not null]
+  updated_by uuid
+  title varchar
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (project_id)
+    (work_item_id)
+  }
+
+  Note: 'Siempre atada a un project. work_item_id nullable: permite acotar la conversación a un work_item específico (ej. una feature puntual en metodología feature-based), o dejarla a nivel proyecto general si es NULL. updated_by: cualquier participante puede renombrar el título de la conversación grupal. PENDIENTE: validar a nivel aplicación que work_item_id pertenezca al mismo project_id'
+}
+
+Table conversation_participants {
+  conversation_id uuid [not null]
+  user_id uuid [not null]
+  added_by uuid
+  joined_at timestamp [not null, default: `now()`]
+  left_at timestamp
+  last_read_at timestamp
+
+  indexes {
+    (conversation_id, user_id) [pk]
+    (user_id)
+  }
+
+  Note: 'last_read_at: marca hasta qué momento el usuario leyó la conversación (para el badge de "no leídos"), en vez de un read-receipt por mensaje individual — más simple y suficiente para un inbox de proyecto'
+}
+
+Table messages {
+  id uuid [pk, default: `gen_random_uuid()`]
+  conversation_id uuid [not null]
+  sender_id uuid [not null]
+  content text [not null]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (conversation_id)
+  }
+}
+
+Table notifications {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null]
+  entity_type varchar
+  entity_id uuid
+  type varchar [not null]
+  title varchar [not null]
+  body text
+  read_at timestamp
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (user_id)
+    (user_id, read_at)
+    (entity_type, entity_id)
+  }
+
+  Note: 'user_id: destinatario de la notificación (siempre 1 usuario, no grupal). entity_type/entity_id: scope polimórfico, mismo trade-off que roles/invitations (sin FK real, validación a nivel aplicación). entity_type: message | work_item | ceremony | invitation | document | etc. type: describe el motivo (mention, assignment, ceremony_reminder, new_message, etc.), sin CHECK. read_at nullable: NULL = no leída'
+}
+
+Table work_item_dependencies {
+  id uuid [pk, default: `gen_random_uuid()`]
+  source_work_item_id uuid [not null]
+  target_work_item_id uuid [not null]
+  type varchar [not null]
+  created_by uuid
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (source_work_item_id, target_work_item_id, type) [unique]
+    (source_work_item_id)
+    (target_work_item_id)
+  }
+
+  Note: 'type: blocks | relates_to | duplicates (sin CHECK). blocks es direccional (source bloquea a target). relates_to/duplicates son conceptualmente simétricos — la app debe consultar en ambas direcciones o normalizar el orden de inserción para evitar filas espejo duplicadas (ej. A relates_to B Y B relates_to A como dos filas separadas para la misma relación). PENDIENTE (DDL final): CHECK (source_work_item_id != target_work_item_id) para evitar auto-referencia'
+}
+
+Table comments {
+  id uuid [pk, default: `gen_random_uuid()`]
+  entity_type varchar [not null]
+  entity_id uuid [not null]
+  author_id uuid [not null]
+  content text [not null]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    (entity_type, entity_id)
+  }
+
+  Note: 'entity_type/entity_id: scope polimórfico, mismo trade-off que roles/invitations/notifications (sin FK real, validación a nivel aplicación). entity_type: work_item | ceremony | document | etc. Estructura plana, sin respuestas anidadas'
+}
+
+Table activity_log {
+  id uuid [pk, default: `gen_random_uuid()`]
+  entity_type varchar [not null]
+  entity_id uuid [not null]
+  actor_id uuid
+  field_name varchar [not null]
+  old_value varchar
+  new_value varchar
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (entity_type, entity_id)
+  }
+
+  Note: 'entity_type/entity_id: scope polimórfico, mismo patrón que comments/notifications. entity_type: work_item | ceremony | document. field_name: status | iteration | assignee (solo cambios clave de negocio, no cada campo editado). old_value/new_value en varchar genérico (el tipo real depende de field_name, interpretado por la app). actor_id nullable: cambios automáticos del sistema sin un usuario detrás (ej. transición automática de status). Sin updated_at/deleted_at: es un log append-only, las filas no se editan ni se borran'
+}
+
+Ref: organization_members.organization_id > organizations.id [delete: restrict]
+Ref: organization_members.user_id > users.id [delete: restrict]
+Ref: organization_members.role_id > roles.id [delete: restrict]
+Ref: organization_members.invited_by > users.id [delete: restrict]
+Ref: projects.organization_id > organizations.id [delete: restrict]
+Ref: projects.created_by > users.id [delete: restrict]
+Ref: project_members.project_id > projects.id [delete: restrict]
+Ref: project_members.user_id > users.id [delete: restrict]
+Ref: project_members.role_id > roles.id [delete: restrict]
+Ref: project_members.invited_by > users.id [delete: restrict]
+Ref: role_permissions.role_id > roles.id [delete: restrict]
+Ref: role_permissions.permission_id > permissions.id [delete: restrict]
+Ref: roles.created_by > users.id [delete: restrict]
+Ref: organizations.created_by > users.id [delete: restrict]
+Ref: role_permissions.granted_by > users.id [delete: restrict]
+Ref: user_preferences.user_id > users.id [delete: restrict]
+Ref: organization_settings.organization_id > organizations.id [delete: restrict]
+Ref: project_settings.project_id > projects.id [delete: restrict]
+Ref: organization_settings.updated_by > users.id [delete: restrict]
+Ref: project_settings.updated_by > users.id [delete: restrict]
+Ref: user_tokens.user_id > users.id [delete: restrict]
+Ref: invitations.invited_by > users.id [delete: restrict]
+Ref: invitations.role_id > roles.id [delete: restrict]
+Ref: invitations.accepted_by > users.id [delete: restrict]
+Ref: sessions.user_id > users.id [delete: restrict]
+Ref: user_identities.user_id > users.id [delete: restrict]
+Ref: iterations.project_id > projects.id [delete: restrict]
+Ref: iterations.created_by > users.id [delete: restrict]
+Ref: iterations.updated_by > users.id [delete: restrict]
+Ref: work_item_statuses.project_id > projects.id [delete: restrict]
+Ref: work_item_statuses.created_by > users.id [delete: restrict]
+Ref: work_item_statuses.updated_by > users.id [delete: restrict]
+Ref: work_items.project_id > projects.id [delete: restrict]
+Ref: work_items.parent_id > work_items.id [delete: restrict]
+Ref: work_items.iteration_id > iterations.id [delete: restrict]
+Ref: work_items.status_id > work_item_statuses.id [delete: restrict]
+Ref: work_items.created_by > users.id [delete: restrict]
+Ref: work_items.updated_by > users.id [delete: restrict]
+Ref: work_item_assignees.work_item_id > work_items.id [delete: restrict]
+Ref: work_item_assignees.user_id > users.id [delete: restrict]
+Ref: work_item_assignees.assigned_by > users.id [delete: restrict]
+Ref: ceremonies.project_id > projects.id [delete: restrict]
+Ref: ceremonies.iteration_id > iterations.id [delete: restrict]
+Ref: ceremonies.created_by > users.id [delete: restrict]
+Ref: ceremonies.updated_by > users.id [delete: restrict]
+Ref: ceremony_participants.ceremony_id > ceremonies.id [delete: restrict]
+Ref: ceremony_participants.user_id > users.id [delete: restrict]
+Ref: ceremony_work_items.ceremony_id > ceremonies.id [delete: restrict]
+Ref: ceremony_work_items.work_item_id > work_items.id [delete: restrict]
+Ref: ceremony_work_items.created_by > users.id [delete: restrict]
+Ref: documents.project_id > projects.id [delete: restrict]
+Ref: documents.created_by > users.id [delete: restrict]
+Ref: documents.updated_by > users.id [delete: restrict]
+Ref: document_work_items.document_id > documents.id [delete: restrict]
+Ref: document_work_items.work_item_id > work_items.id [delete: restrict]
+Ref: document_work_items.created_by > users.id [delete: restrict]
+Ref: conversations.project_id > projects.id [delete: restrict]
+Ref: conversations.work_item_id > work_items.id [delete: restrict]
+Ref: conversations.created_by > users.id [delete: restrict]
+Ref: conversations.updated_by > users.id [delete: restrict]
+Ref: conversation_participants.conversation_id > conversations.id [delete: restrict]
+Ref: conversation_participants.user_id > users.id [delete: restrict]
+Ref: conversation_participants.added_by > users.id [delete: restrict]
+Ref: messages.conversation_id > conversations.id [delete: restrict]
+Ref: messages.sender_id > users.id [delete: restrict]
+Ref: notifications.user_id > users.id [delete: restrict]
+Ref: work_item_dependencies.source_work_item_id > work_items.id [delete: restrict]
+Ref: work_item_dependencies.target_work_item_id > work_items.id [delete: restrict]
+Ref: work_item_dependencies.created_by > users.id [delete: restrict]
+Ref: comments.author_id > users.id [delete: restrict]
+Ref: activity_log.actor_id > users.id [delete: restrict]
