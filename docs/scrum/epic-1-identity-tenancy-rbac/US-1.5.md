@@ -30,6 +30,32 @@ Suggested location:
 
 Permission keys and role-to-permission mappings must be defined only in `scripts/seed.py`; no other module may hardcode a permission key string — future code that checks a permission imports the key as a constant sourced from this script or a shared constants module it defines.
 
+## Code Sketch
+
+```python
+# scripts/seed.py
+PERMISSIONS = [
+    "organizations.members.read",
+    "organizations.members.manage",
+]
+
+SYSTEM_ROLES = {
+    "ADMIN": PERMISSIONS,
+    "MEMBER": ["organizations.members.read"],
+}
+
+
+async def upsert_permissions(db: AsyncSession) -> dict[str, Permission]: ...
+async def upsert_system_roles(db: AsyncSession, permissions: dict[str, Permission]) -> None: ...
+
+
+async def main() -> None: ...
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
 ## Idempotent Seed Rule
 
 Running `scripts/seed.py` more than once must never create duplicate rows or fail with a constraint violation.

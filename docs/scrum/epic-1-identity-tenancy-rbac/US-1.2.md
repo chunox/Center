@@ -34,6 +34,59 @@ Suggested location:
 
 Configuration, database session setup, and exception handling must live only in `app/core/`; no other module may construct its own database engine or define its own settings object.
 
+## Code Sketch
+
+```python
+# app/core/config.py
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    environment: str = "development"
+    database_url: str = "sqlite+aiosqlite:///./dev.db"
+    secret_key: str = "changeme"
+    access_token_expire_minutes: int = 30
+
+
+@lru_cache
+def get_settings() -> Settings: ...
+```
+
+```python
+# app/core/database.py
+engine = create_async_engine(settings.database_url, echo=settings.environment == "development")
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]: ...
+```
+
+```python
+# app/core/exceptions.py
+class AppError(Exception):
+    def __init__(self, code: str, message: str, status_code: int, details: dict | None = None): ...
+
+
+class EmailAlreadyRegisteredError(AppError): ...
+class InvalidCredentialsError(AppError): ...
+class PermissionDeniedError(AppError): ...
+
+
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse: ...
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse: ...
+```
+
+```python
+# app/main.py
+app = FastAPI(title="PM Tool API", version="0.1.0")
+app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
+app.include_router(api_router, prefix="/api/v1")
+
+
+@app.get("/health")
+async def health() -> dict[str, str]: ...
+```
+
 ## Core Principle
 
 `app/core/` contains infrastructure only — no business logic and no direct SQL query ever lives here.

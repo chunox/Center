@@ -36,6 +36,82 @@ Suggested location:
 
 Membership business rules (auto-assigning ADMIN to the creator, enforcing the reactivation rule) must live in `app/services/membership_service.py`, not in the router or the repository.
 
+## Code Sketch
+
+```python
+# app/repositories/organization_repository.py
+class OrganizationRepository:
+    def __init__(self, session: AsyncSession): ...
+
+    async def get_by_slug(self, slug: str) -> Organization | None: ...
+    async def create(self, data: OrganizationCreate, created_by: uuid.UUID) -> Organization: ...
+    async def list_for_user(self, user_id: uuid.UUID) -> list[Organization]: ...
+    async def add_member(self, organization_id: uuid.UUID, user_id: uuid.UUID, role_id: uuid.UUID) -> OrganizationMember: ...
+    async def list_members(self, organization_id: uuid.UUID) -> list[OrganizationMember]: ...
+    async def get_member(self, organization_id: uuid.UUID, user_id: uuid.UUID) -> OrganizationMember | None: ...
+    async def count_active_admins(self, organization_id: uuid.UUID) -> int: ...
+```
+
+```python
+# app/services/membership_service.py
+class MembershipService:
+    def __init__(self, org_repo: OrganizationRepository): ...
+
+    async def create_organization_with_admin(self, data: OrganizationCreate, creator_id: uuid.UUID) -> Organization: ...
+    async def list_members(self, organization_id: uuid.UUID) -> list[OrganizationMember]: ...
+    async def change_role(self, organization_id: uuid.UUID, user_id: uuid.UUID, role_id: uuid.UUID) -> OrganizationMember: ...
+    async def remove_member(self, organization_id: uuid.UUID, user_id: uuid.UUID) -> None: ...
+
+    async def _assert_last_admin_safe(self, organization_id: uuid.UUID, user_id: uuid.UUID) -> None: ...
+```
+
+```python
+# app/api/v1/organizations.py
+router = APIRouter()
+
+
+@router.post("", response_model=OrganizationRead, status_code=201)
+async def create_organization(
+    data: OrganizationCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Organization: ...
+
+
+@router.get("", response_model=list[OrganizationRead])
+async def list_my_organizations(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[Organization]: ...
+
+
+@router.get("/{organization_id}/members", response_model=list[OrganizationMemberRead])
+async def list_members(
+    organization_id: uuid.UUID,
+    _: None = Depends(require_permission("organizations.members.read")),
+    db: AsyncSession = Depends(get_db),
+) -> list[OrganizationMember]: ...
+
+
+@router.patch("/{organization_id}/members/{user_id}", response_model=OrganizationMemberRead)
+async def change_member_role(
+    organization_id: uuid.UUID,
+    user_id: uuid.UUID,
+    data: ChangeMemberRoleRequest,
+    _: None = Depends(require_permission("organizations.members.manage")),
+    db: AsyncSession = Depends(get_db),
+) -> OrganizationMember: ...
+
+
+@router.delete("/{organization_id}/members/{user_id}", status_code=204)
+async def remove_member(
+    organization_id: uuid.UUID,
+    user_id: uuid.UUID,
+    _: None = Depends(require_permission("organizations.members.manage")),
+    db: AsyncSession = Depends(get_db),
+) -> None: ...
+```
+
 ## Creator-Is-Admin Rule
 
 The user who creates an organization is always its first member, with the ADMIN role.

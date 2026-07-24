@@ -32,6 +32,49 @@ Suggested location:
 
 Password hashing and JWT encode/decode logic must live only in `app/core/security.py`; no other module may call a hashing or JWT library directly.
 
+## Code Sketch
+
+```python
+# app/core/security.py
+def hash_password(password: str) -> str: ...
+def verify_password(password: str, password_hash: str) -> bool: ...
+
+def create_access_token(user_id: uuid.UUID) -> str: ...
+def decode_access_token(token: str) -> uuid.UUID: ...
+```
+
+```python
+# app/repositories/user_repository.py
+class UserRepository:
+    def __init__(self, session: AsyncSession): ...
+
+    async def get_by_email(self, email: str) -> User | None: ...
+    async def create(self, data: UserCreate, password_hash: str) -> User: ...
+    async def update_last_login(self, user_id: uuid.UUID) -> None: ...
+```
+
+```python
+# app/services/auth_service.py
+class AuthService:
+    def __init__(self, user_repo: UserRepository): ...
+
+    async def register(self, data: UserCreate) -> User: ...
+    async def login(self, email: str, password: str) -> str: ...
+```
+
+```python
+# app/api/v1/auth.py
+router = APIRouter()
+
+
+@router.post("/register", response_model=UserRead, status_code=201)
+async def register(data: UserCreate, db: AsyncSession = Depends(get_db)) -> User: ...
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse: ...
+```
+
 ## Password Hashing Rule
 
 Passwords are never stored or compared in plain text.

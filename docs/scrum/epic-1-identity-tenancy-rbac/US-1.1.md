@@ -36,6 +36,204 @@ Suggested location:
 
 Model contracts must not be duplicated across `app/schemas/`; Pydantic schemas describe API input/output shape only and never subclass or wrap a SQLAlchemy model directly.
 
+## Code Sketch
+
+Structural skeleton only — attribute declarations are shown since they *are* the contract, but no method bodies beyond `__repr__`. Fill in imports and remaining fields per the `Contracts` section below.
+
+```python
+# app/core/mixins.py
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class SoftDeleteMixin:
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AuditMixin:
+    @declared_attr
+    def created_by(cls) -> Mapped[uuid.UUID | None]: ...
+
+    @declared_attr
+    def updated_by(cls) -> Mapped[uuid.UUID | None]: ...
+```
+
+```python
+# app/models/base.py
+class Base(DeclarativeBase):
+    pass
+```
+
+```python
+# app/models/user.py
+class User(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    first_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_name: Mapped[str] = mapped_column(String, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    organization_memberships: Mapped[list["OrganizationMember"]] = relationship(
+        back_populates="user", foreign_keys="OrganizationMember.user_id"
+    )
+
+    def __repr__(self) -> str: ...
+```
+
+```python
+# app/models/organization.py
+class Organization(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "organizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    slug: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+    members: Mapped[list["OrganizationMember"]] = relationship(back_populates="organization")
+
+    def __repr__(self) -> str: ...
+
+
+class OrganizationMember(Base, SoftDeleteMixin):
+    __tablename__ = "organization_members"
+    __table_args__ = (
+        Index("organization_members_active_uk", "organization_id", "user_id", unique=True,
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("organization_members_user_idx", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="RESTRICT"))
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="RESTRICT"))
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    joined_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    organization: Mapped["Organization"] = relationship(back_populates="members")
+    user: Mapped["User"] = relationship(foreign_keys=[user_id], back_populates="organization_memberships")
+    role: Mapped["Role"] = relationship(foreign_keys=[role_id])
+
+    def __repr__(self) -> str: ...
+```
+
+```python
+# app/models/rbac.py
+class Permission(Base):
+    __tablename__ = "permissions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self) -> str: ...
+
+
+class Role(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "roles"
+    __table_args__ = (
+        Index("roles_custom_scope_name_uk", "scope_type", "scope_id", "name", unique=True,
+              postgresql_where=text("deleted_at IS NULL AND is_system = false")),
+        Index("roles_system_name_uk", "name", unique=True,
+              postgresql_where=text("is_system = true AND deleted_at IS NULL")),
+        CheckConstraint(
+            "(is_system = true AND scope_type IS NULL AND scope_id IS NULL) OR "
+            "(is_system = false AND scope_type IS NOT NULL AND scope_id IS NOT NULL)",
+            name="roles_scope_consistency_chk",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    scope_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    scope_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    permissions: Mapped[list["Permission"]] = relationship(secondary="role_permissions", viewonly=True)
+
+    def __repr__(self) -> str: ...
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="RESTRICT"), primary_key=True)
+    permission_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("permissions.id", ondelete="RESTRICT"), primary_key=True)
+    granted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str: ...
+```
+
+```python
+# app/schemas/user.py
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+    first_name: str
+    last_name: str
+
+
+class UserRead(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    first_name: str
+    last_name: str
+    is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+```
+
+```python
+# app/schemas/organization.py
+class OrganizationCreate(BaseModel):
+    name: str
+    slug: str
+
+
+class OrganizationRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrganizationMemberRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    role_id: uuid.UUID
+    joined_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+```
+
+```python
+# app/schemas/rbac.py
+class PermissionRead(BaseModel):
+    id: uuid.UUID
+    key: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoleRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    is_system: bool
+    model_config = ConfigDict(from_attributes=True)
+```
+
 ## Global Tenant Rule
 
 No row in `organization_members`, and no future project- or work-item-scoped row, may exist without resolving to exactly one `organization_id` (directly or transitively).

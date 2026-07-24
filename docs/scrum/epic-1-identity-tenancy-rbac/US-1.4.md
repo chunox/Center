@@ -30,6 +30,29 @@ Suggested location:
 
 Identity and permission resolution logic must live only in `app/core/dependencies.py`; no router or service in any future epic may decode a JWT or query `role_permissions` directly — they depend on these functions instead.
 
+## Code Sketch
+
+```python
+# app/core/dependencies.py
+oauth2_scheme = HTTPBearer()
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User: ...
+
+
+def require_permission(key: str):
+    async def dependency(
+        organization_id: uuid.UUID,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> None: ...
+
+    return dependency
+```
+
 ## Global Authorization Rule
 
 Authorization is resolved fresh on every request, never cached in the token or in memory, per Decision D7 in `pm-tool-schema-decisiones.md`.
